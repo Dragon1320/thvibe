@@ -1,0 +1,8 @@
+[package]
+name = "thvibe-vibe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#soon™
+#buttplug = "5.1.8"

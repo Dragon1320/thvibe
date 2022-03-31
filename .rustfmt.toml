@@ -1,0 +1,7 @@
+newline_style = "Unix"
+tab_spaces = 2
+
+max_width = 120
+# comment_width = 120
+
+# match_block_trailing_comma = true

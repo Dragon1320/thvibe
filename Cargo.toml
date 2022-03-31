@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+  "win",
+  "injector",
+  "hook",
+  "vibe",
+
+  # tmp for testing
+  "app",
+]

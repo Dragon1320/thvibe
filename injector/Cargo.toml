@@ -1,0 +1,22 @@
+[package]
+name = "injector"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "injector"
+path = "src/lib.rs"
+
+[[bin]]
+name = "injector-cli"
+path = "src/bin.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["clap"]
+
+[dependencies]
+winapi = { version = "0.3.9", features = ["errhandlingapi", "psapi", "handleapi", "processthreadsapi", "winnt", "minwindef", "memoryapi", "libloaderapi", "synchapi", "winbase"] }
+widestring = "0.5.1"
+
+clap = { version = "3.1.6", optional = true }
