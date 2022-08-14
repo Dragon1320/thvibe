@@ -5,10 +5,10 @@ edition = "2021"
 
 [lib]
 name = "injector"
-path = "src/lib.rs"
+#path = "src/lib.rs"
 
 [[bin]]
-name = "injector-cli"
+name = "injector"
 path = "src/bin.rs"
 required-features = ["cli"]
 
@@ -16,7 +16,6 @@ required-features = ["cli"]
 cli = ["clap"]
 
 [dependencies]
-winapi = { version = "0.3.9", features = ["errhandlingapi", "psapi", "handleapi", "processthreadsapi", "winnt", "minwindef", "memoryapi", "libloaderapi", "synchapi", "winbase"] }
-widestring = "0.5.1"
-
-clap = { version = "3.1.6", optional = true }
+win = { path = "../win" }
+winapi = { version = "0.3", features = ["errhandlingapi", "psapi", "handleapi", "processthreadsapi", "winnt", "minwindef", "memoryapi", "libloaderapi", "synchapi", "winbase"] }
+clap = { version = "3.1", optional = true }

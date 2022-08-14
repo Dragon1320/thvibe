@@ -1,4 +1,5 @@
-// TODO: injector cli
-fn main() {
+mod lib;
 
+fn main() {
+  println!("rawrxd");
 }

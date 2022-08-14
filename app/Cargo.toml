@@ -1,0 +1,11 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+win = { path = "../win" }
+injector = { path = "../injector" }
+hook = { path = "../hook" }
+vibe = { path = "../vibe" }
+winapi = { version = "0.3.9", features = ["winnt"] }

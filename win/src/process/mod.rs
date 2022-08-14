@@ -1,163 +1,75 @@
-use std::{cmp, ptr};
+use std::{ffi, mem, os::windows::prelude::OsStringExt, ptr};
 
 use winapi::{
-  shared::{minwindef::MAX_PATH, ntdef::NULL},
-  um::{
-    handleapi::CloseHandle,
-    processthreadsapi::OpenProcess,
-    psapi::{EnumProcessModules, GetModuleBaseNameW},
-  },
+  shared::minwindef::MAX_PATH,
+  um::{handleapi::CloseHandle, processthreadsapi::OpenProcess, psapi::GetModuleBaseNameW},
 };
 
 use crate::{
-  error::{util::get_last_error, WinApiError},
-  types::{Handle, RawHandle, RawInstance, INSTANCE_SIZE},
+  error::{util::get_last_error, WinApiCodeResult, WinApiError, WinApiResult},
+  wintype::{Pid, ProcessHandle, Wchar},
 };
 
-use self::error::ModuleNameError;
-
-pub mod error;
 pub mod util;
 
 #[derive(Debug)]
-pub struct Process {
-  pub pid: u32,
-  raw_handle: RawHandle,
+pub struct WinApiProcess {
+  handle: ProcessHandle,
 }
 
-impl Process {
-  pub fn new(access: u32, inherit: bool, pid: u32) -> Result<Self, WinApiError> {
-    let raw_handle = unsafe { OpenProcess(access, inherit as i32, pid) };
+impl WinApiProcess {
+  pub fn new(pid: Pid, access: u32) -> WinApiCodeResult<Self> {
+    let handle = unsafe { OpenProcess(access, 0, pid) };
 
-    if raw_handle == NULL {
-      let error = get_last_error();
+    if handle.is_null() {
+      let err = get_last_error();
 
-      Err(error)
-    } else {
-      Ok(Process { pid, raw_handle })
+      return Err(err);
     }
+
+    Ok(Self { handle })
   }
 
-  pub fn borrow<'a>(&'a self) -> &'a Handle {
-    unsafe { &*self.raw_handle }
-  }
+  pub fn get_name(&self) -> WinApiResult<String> {
+    let mut buffer = Vec::with_capacity(MAX_PATH);
+    let buffer_chars = buffer.capacity() / mem::size_of::<Wchar>();
 
-  pub fn borrow_mut<'a>(&'a mut self) -> &'a mut Handle {
-    unsafe { &mut *self.raw_handle }
-  }
-
-  pub fn get_module_count(&self) -> Result<u32, WinApiError> {
-    let mut req_bytes = 0;
-
-    let code = unsafe { EnumProcessModules(self.raw_handle, ptr::null_mut(), 0, &mut req_bytes) };
-
-    if code == 0 {
-      let error = get_last_error();
-
-      Err(error)
-    } else {
-      let num_procs = req_bytes / *INSTANCE_SIZE as u32;
-
-      Ok(num_procs)
-    }
-  }
-
-  pub fn get_modules(&self, max: u32) -> Result<Vec<Module>, WinApiError> {
-    let mut instances: Vec<RawInstance> = Vec::with_capacity(max as usize);
-    let mut req_bytes = 0;
-
-    let code = unsafe {
-      EnumProcessModules(
-        self.raw_handle,
-        instances.as_mut_ptr(),
-        max * *INSTANCE_SIZE as u32,
-        &mut req_bytes,
-      )
+    let ret_chars = unsafe {
+      // safety
+      // - cannot overflow u32, buffer capped at MAX_PATH
+      GetModuleBaseNameW(self.handle, ptr::null_mut(), buffer.as_mut_ptr(), buffer_chars as u32)
     };
 
-    if code == 0 {
-      let error = get_last_error();
+    if ret_chars == 0 {
+      let err = get_last_error();
 
-      Err(error)
-    } else {
-      let num_instances = req_bytes as usize / *INSTANCE_SIZE;
-
-      unsafe {
-        instances.set_len(cmp::min(instances.capacity(), num_instances));
-      }
-
-      instances
-        .into_iter()
-        .map(|instance| Module::from(self, instance))
-        .collect()
+      return Err(WinApiError::WinApiErrorCode(err));
     }
-  }
 
-  pub fn get_all_modules(&self) -> Result<Vec<Module>, WinApiError> {
-    let req_capacity = self.get_module_count()?;
-
-    self.get_modules(req_capacity)
-  }
-
-  pub fn get_first_module(&self) -> Result<Module, WinApiError> {
-    let modules = self.get_modules(1)?;
-
-    Ok(modules.into_iter().next().unwrap())
-  }
-
-  pub fn get_executable_name(&self) -> Result<String, ModuleNameError> {
-    let module = self.get_first_module()?;
-
-    module.get_name()
-  }
-}
-
-// this is unsafe and may fail, but its better to leak the memory than panic
-impl Drop for Process {
-  fn drop(&mut self) {
     unsafe {
-      CloseHandle(self.raw_handle);
+      // safety
+      // - cannot be higher than buffer_chars
+      buffer.set_len(ret_chars as usize);
+    }
+
+    let name = ffi::OsString::from_wide(&buffer).into_string();
+
+    match name {
+      Ok(name) => Ok(name),
+      Err(os_string) => Err(WinApiError::StringParseError(os_string)),
     }
   }
 }
 
-#[derive(Debug)]
-pub struct Module<'a> {
-  process: &'a Process,
-  instance: RawInstance,
-}
+impl Drop for WinApiProcess {
+  // if bad stuff happens, print error and (probably) leak memory
+  fn drop(&mut self) {
+    let res = unsafe { CloseHandle(self.handle) };
 
-impl<'a> Module<'a> {
-  pub fn from(process: &'a Process, instance: RawInstance) -> Result<Self, WinApiError> {
-    Ok(Module { process, instance })
-  }
+    if res == 0 {
+      let err = get_last_error();
 
-  pub fn get_name(&self) -> Result<String, ModuleNameError> {
-    let mut name: Vec<u16> = Vec::with_capacity(MAX_PATH);
-
-    // return value is 0 on failure
-    let char_count = unsafe {
-      GetModuleBaseNameW(
-        // this is ok since this fn doesnt actually mutate the handle
-        self.process.borrow() as *const _ as *mut _,
-        self.instance,
-        name.as_mut_ptr(),
-        MAX_PATH as u32,
-      )
-    };
-
-    if char_count == 0 {
-      let error = get_last_error();
-
-      Err(ModuleNameError::WinApiError(error))
-    } else {
-      unsafe {
-        name.set_len(char_count as usize);
-      }
-
-      // TODO: idk if this is fine, but whatevs for now
-      // apparently wide strings in windows arent actually utf-16...
-      Ok(String::from_utf16(&name)?)
+      eprintln!("{:?}", err);
     }
   }
 }

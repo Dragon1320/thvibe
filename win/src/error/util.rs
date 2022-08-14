@@ -1,9 +1,9 @@
 use winapi::um::errhandlingapi::GetLastError;
 
-use super::WinApiError;
+use super::WinApiErrorCode;
 
-pub fn get_last_error() -> WinApiError {
+pub fn get_last_error() -> WinApiErrorCode {
   let code = unsafe { GetLastError() };
 
-  WinApiError::new(code)
+  WinApiErrorCode::new(code)
 }

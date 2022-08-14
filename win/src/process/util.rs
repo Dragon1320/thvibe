@@ -1,94 +1,49 @@
-use winapi::{
-  shared::winerror::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, ERROR_PARTIAL_COPY},
-  um::{
-    psapi::EnumProcesses,
-    winnt::{PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
-  },
-};
+use std::mem;
+
+use winapi::um::psapi::EnumProcesses;
 
 use crate::{
-  error::{util::get_last_error, WinApiError},
-  types::{Pid, PID_SIZE},
+  error::{util::get_last_error, WinApiError, WinApiResult},
+  wintype::Pid,
 };
 
-use super::{error::ModuleNameError, Process};
+const INITIAL_BUFFER_SIZE: usize = 1024;
 
-// note: capacity is a u32 as thats what the winapi fn expects, its also
-// nicer to convert a u32 -> usize than the other way around
-pub fn get_process_ids(max: u32) -> Result<Vec<Pid>, WinApiError> {
-  let mut pids: Vec<Pid> = Vec::with_capacity(max as usize);
-  let mut written_bytes = 0;
-
-  let code = unsafe { EnumProcesses(pids.as_mut_ptr(), max * *PID_SIZE as u32, &mut written_bytes) };
-
-  // non-zero return value = success
-  if code == 0 {
-    let error = get_last_error();
-
-    Err(error)
-  } else {
-    let num_pids = written_bytes as usize / *PID_SIZE;
-
-    unsafe {
-      pids.set_len(num_pids);
-    }
-
-    Ok(pids)
-  }
-}
-
-pub fn get_all_process_ids(start_cap: u32) -> Result<Vec<Pid>, WinApiError> {
-  let mut idx = 1;
+pub fn enum_processes() -> WinApiResult<Vec<Pid>> {
+  let mut buffer_size = INITIAL_BUFFER_SIZE;
 
   loop {
-    let capacity = start_cap * idx;
+    let mut buffer = Vec::with_capacity(buffer_size);
+    let buffer_bytes = buffer.capacity() * mem::size_of::<Pid>();
 
-    let pids = get_process_ids(capacity)?;
-
-    if pids.len() < capacity as usize {
-      return Ok(pids);
+    // ensure we dont pass an invalid value to winapi
+    // realistically your machine would crash if running that many process but... this is windows
+    if buffer_bytes > u32::MAX as usize {
+      return Err(WinApiError::BufferSizeError(buffer_bytes));
     }
 
-    idx += 1;
-  }
-}
+    let mut ret_bytes = 0;
 
-/// finds process by first module name and returns a pid + handle to that process
-pub fn find_process_by_name(name: &str, start_cap: u32) -> Result<Option<Process>, ModuleNameError> {
-  let pids = get_all_process_ids(start_cap)?;
+    let res = unsafe { EnumProcesses(buffer.as_mut_ptr(), buffer_bytes as u32, &mut ret_bytes) };
 
-  for pid in pids {
-    let process = match Process::new(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
-      Ok(process) => process,
-      Err(error) => {
-        if pid == 0 && error.code == ERROR_INVALID_PARAMETER {
-          continue;
-        }
+    if res == 0 {
+      let err = get_last_error();
 
-        if error.code == ERROR_ACCESS_DENIED {
-          continue;
-        }
-
-        return Err(ModuleNameError::WinApiError(error));
-      }
-    };
-
-    match process.get_executable_name() {
-      Ok(exe_name) => {
-        if exe_name == name {
-          return Ok(Some(process));
-        }
-      }
-      Err(error) => match error {
-        ModuleNameError::WinApiError(error) => {
-          if error.code == ERROR_PARTIAL_COPY {
-            continue;
-          }
-        }
-        _ => return Err(error),
-      },
+      return Err(WinApiError::WinApiErrorCode(err));
     }
-  }
 
-  Ok(None)
+    if (ret_bytes as usize) < buffer_bytes {
+      let ret_items = ret_bytes as usize / mem::size_of::<Pid>();
+
+      unsafe {
+        // safety
+        // - checked that ret_bytes < buffer_bytes
+        buffer.set_len(ret_items);
+      };
+
+      return Ok(buffer);
+    }
+
+    buffer_size *= 2;
+  }
 }
